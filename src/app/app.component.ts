@@ -451,8 +451,16 @@ export class AppComponent implements OnInit {
     return this.draft.reviews.every((review) => review.status === 'approved');
   }
 
-  get hasIncompleteReviews(): boolean {
-    return this.draft.reviews.some((review) => review.status !== 'approved');
+  get reviewGaps(): string[] {
+    const gaps: string[] = [];
+    const unresolved = this.unresolvedDiscussionCount;
+    if (unresolved) gaps.push(`${unresolved} 条逐句讨论尚未解决`);
+    this.draft.reviews
+      .filter((review) => review.status !== 'approved')
+      .forEach((review) => gaps.push(
+        `${review.role}（${review.owner}）未确认：${review.status === 'changes' ? '已退回，需修改后重新确认' : '待审阅'}`
+      ));
+    return gaps;
   }
 
   isSentenceDiscussed(index: number): boolean {
@@ -477,12 +485,14 @@ export class AppComponent implements OnInit {
     this.commit((draft) => {
       (draft as unknown as Record<string, unknown>)[field] = value;
       draft.status = draft.status === 'locked' ? 'draft' : draft.status;
+      this.resetRoleApprovals(draft);
     });
   }
 
   toggleChannel(channel: string, checked: boolean): void {
     this.commit((draft) => {
       draft.channels = checked ? [...new Set([...draft.channels, channel])] : draft.channels.filter((item) => item !== channel);
+      this.resetRoleApprovals(draft);
     });
   }
 
@@ -491,13 +501,18 @@ export class AppComponent implements OnInit {
       draft.requiredLocales = checked
         ? [...new Set([...draft.requiredLocales, locale])]
         : draft.requiredLocales.filter((item) => item !== locale);
+      this.resetRoleApprovals(draft);
     });
   }
 
   updateLanguage(field: 'title' | 'body' | 'translator', value: string): void {
     this.commit((draft) => {
       const language = draft.languages.find((item) => item.id === this.selectedLanguageId);
-      if (language) language[field] = value;
+      if (language) {
+        language[field] = value;
+        language.reviewed = false;
+      }
+      this.resetRoleApprovals(draft);
     });
   }
 
@@ -560,6 +575,7 @@ export class AppComponent implements OnInit {
         language.body = template.body[language.id] ?? language.body;
         language.reviewed = false;
       });
+      this.resetRoleApprovals(draft);
     });
     this.toastr.success(`已应用“${template.name}”模板，请根据事件信息调整。`, '模板复用');
   }
@@ -570,17 +586,25 @@ export class AppComponent implements OnInit {
       this.activeView = 'checks';
       return;
     }
+    if (this.reviewGaps.length) {
+      this.activeView = 'review';
+      this.toastr.warning(this.reviewGaps.join('；'), '审阅未完成，不能锁定', { duration: 6000 });
+      return;
+    }
     const snapshot: VersionSnapshot = {
-      id: uid('version'), label: '最终锁定版本', createdAt: new Date().toISOString(), version: this.nextVersion,
+      id: uid('version'), label: this.draft.emergencyRevision ? '紧急修订锁定版本' : '最终锁定版本',
+      createdAt: new Date().toISOString(), version: this.nextVersion,
       title: this.draft.title, severity: this.draft.severity, scope: this.draft.scope, eventAt: this.draft.eventAt,
       effectiveAt: this.draft.effectiveAt, expiresAt: this.draft.expiresAt, channels: [...this.draft.channels],
-      languages: clone(this.draft.languages), note: '发布前检查通过并锁定。', emergency: false
+      languages: clone(this.draft.languages), note: '发布检查、语言复核与四类角色确认均针对本稿完成后锁定。',
+      emergency: this.draft.emergencyRevision
     };
     this.commit((draft) => {
       draft.versions.push(snapshot);
       draft.version = snapshot.version;
       draft.status = 'locked';
       draft.lockedAt = snapshot.createdAt;
+      draft.emergencyRevision = false;
     });
     this.compareBaseId = this.draft.versions.at(-2)?.id ?? '';
     this.compareTargetId = this.draft.versions.at(-1)?.id ?? '';
@@ -595,9 +619,10 @@ export class AppComponent implements OnInit {
       draft.emergencyRevision = true;
       draft.version = `${major}.${minor + 1}.0-emergency`;
       draft.lockedAt = undefined;
+      this.resetRoleApprovals(draft);
     });
     this.activeView = 'compose';
-    this.toastr.warning('已创建紧急修订稿；锁定版本仍完整保留。', '进入紧急修订');
+    this.toastr.warning('已创建紧急修订稿，四类角色确认已重置为待审阅；锁定版本仍完整保留。', '进入紧急修订');
   }
 
   showCheck(check: CheckResult): void {
@@ -662,6 +687,13 @@ export class AppComponent implements OnInit {
   private persist(): void {
     this.lastSavedAt = this.formatDateTime(new Date().toISOString());
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...this.draft, updatedAt: new Date().toISOString() }));
+  }
+
+  /** 确认记录只绑定当前稿件快照：内容、事件要素、渠道或必需语言一变，四类角色确认即回到待审阅。 */
+  private resetRoleApprovals(draft: NoticeDraft): void {
+    draft.reviews.forEach((review) => {
+      review.status = 'pending';
+    });
   }
 
   private migrate(value: NoticeDraft): NoticeDraft {

@@ -46,7 +46,7 @@
 
     <div *ngIf="draft.emergencyRevision" class="emergency-banner">
       <div class="emergency-sign">修订</div>
-      <div><strong>正在处理紧急修订</strong><p>已从锁定版本派生新草稿，原版本不会被覆盖。完成后需重新进行发布检查。</p></div>
+      <div><strong>正在处理紧急修订</strong><p>已从锁定版本派生新草稿，原版本不会被覆盖；四类角色确认已重置为待审阅，完成后需重新通过发布检查与角色确认。</p></div>
       <button nbButton status="warning" size="small" (click)="activeView = 'checks'">前往检查</button>
     </div>
 
@@ -148,7 +148,7 @@
           <nb-card-body class="workflow-list">
             <div class="done"><span>1</span><p><strong>内容起草</strong>自动保存到本机</p></div>
             <div [class.done]="blockingChecks.length === 0"><span>2</span><p><strong>发布检查</strong>必须清除阻断项</p></div>
-            <div [class.done]="allReviewsApproved"><span>3</span><p><strong>角色确认</strong>编辑、法务、翻译、发布人</p></div>
+            <div [class.done]="allReviewsApproved && unresolvedDiscussionCount === 0"><span>3</span><p><strong>角色确认</strong>编辑、法务、翻译、发布人，且讨论全部解决</p></div>
             <div [class.done]="isLocked"><span>4</span><p><strong>冻结发布</strong>生成不可变快照</p></div>
           </nb-card-body>
         </nb-card>
@@ -225,12 +225,17 @@
           <nb-card class="panel role-review-card">
             <nb-card-header><div><span class="section-kicker">责任链</span><h3>角色审阅</h3></div></nb-card-header>
             <nb-card-body>
+              <p class="muted">确认绑定当前稿件：内容、事件要素、渠道或必需语言变更，以及发起紧急修订后，确认自动回到待审阅。</p>
               <article *ngFor="let review of draft.reviews">
                 <header><div><strong>{{ review.role }}</strong><span>{{ review.owner }}</span></div><b [class]="review.status">{{ review.status === 'approved' ? '已确认' : review.status === 'changes' ? '需修改' : '待审阅' }}</b></header>
                 <textarea nbInput fullWidth rows="2" [disabled]="isLocked" [ngModel]="review.note" (ngModelChange)="setReviewNote(review.role, $event)" placeholder="审阅备注"></textarea>
                 <div><button nbButton size="tiny" status="success" [disabled]="isLocked" (click)="setReviewStatus(review.role, 'approved')">确认</button><button nbButton size="tiny" status="warning" [disabled]="isLocked" (click)="setReviewStatus(review.role, 'changes')">退回修改</button></div>
               </article>
-              <nb-alert status="warning" *ngIf="hasIncompleteReviews">仍有角色未确认，不能视为完成跨角色审阅。</nb-alert>
+              <nb-alert status="warning" *ngIf="reviewGaps.length" class="gap-alert">
+                <strong>锁定前仍需完成：</strong>
+                <ul><li *ngFor="let gap of reviewGaps">{{ gap }}</li></ul>
+              </nb-alert>
+              <nb-alert status="success" *ngIf="!reviewGaps.length">讨论与四类角色确认均已针对当前稿件完成，可以锁定版本。</nb-alert>
             </nb-card-body>
           </nb-card>
         </aside>

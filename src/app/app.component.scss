@@ -126,6 +126,8 @@ blockquote { margin: 0 0 15px; padding: 15px 18px; border-left: 4px solid #ef835
 .role-review-card article > header b.approved { color: #27795e; background: #e2f5ed; }
 .role-review-card article > header b.changes { color: #bb5a42; background: #fff0ea; }
 .role-review-card article > div:last-child { display: flex; gap: 6px; margin-top: 7px; }
+.gap-alert ul { margin: 6px 0 0; padding-left: 18px; }
+.gap-alert li { margin: 2px 0; }
 .version-actions { display: flex; gap: 8px; }
 .version-layout > aside nb-card { position: sticky; top: 100px; }
 .timeline article { display: grid; grid-template-columns: 18px 1fr; gap: 10px; min-height: 90px; position: relative; }
