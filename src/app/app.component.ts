@@ -48,6 +48,10 @@ interface RoleReview {
   owner: string;
   status: ReviewStatus;
   note: string;
+  /** 确认时对应的稿件内容签名，用于识别确认是否仍针对当前稿。 */
+  snapshot?: string;
+  /** 最近一次给出确认结论的时间。 */
+  confirmedAt?: string;
 }
 
 interface VersionSnapshot {
@@ -123,6 +127,27 @@ function uid(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/** 单个语言版本的内容签名：标题、正文或译者变化都会使签名失效。 */
+function languageSignature(language: LanguageVersion): string {
+  return JSON.stringify([language.id, language.title, language.body, language.translator]);
+}
+
+/** 整稿内容签名：事件要素、渠道、必需语言和各语言正文共同决定确认记录是否还有效。 */
+function contentSignature(draft: NoticeDraft): string {
+  return JSON.stringify({
+    title: draft.title,
+    eventType: draft.eventType,
+    severity: draft.severity,
+    scope: draft.scope,
+    eventAt: draft.eventAt,
+    effectiveAt: draft.effectiveAt,
+    expiresAt: draft.expiresAt,
+    channels: [...draft.channels].sort(),
+    requiredLocales: [...draft.requiredLocales].sort(),
+    languages: draft.languages.map((language) => languageSignature(language))
+  });
+}
+
 function initialDraft(): NoticeDraft {
   const first: VersionSnapshot = {
     id: 'version-1-0-0',
@@ -177,7 +202,7 @@ function initialDraft(): NoticeDraft {
     ]
   };
 
-  return {
+  const draft: NoticeDraft = {
     id: 'notice-haiyan-2026',
     title: '台风“海燕”橙色预警及人员转移通知',
     eventType: '台风',
@@ -223,6 +248,14 @@ function initialDraft(): NoticeDraft {
     emergencyRevision: false,
     updatedAt: new Date().toISOString()
   };
+
+  // 种子数据中“编辑已确认”视为针对当前稿的确认，绑定快照签名。
+  const editorReview = draft.reviews.find((review) => review.role === '编辑');
+  if (editorReview) {
+    editorReview.snapshot = contentSignature(draft);
+    editorReview.confirmedAt = '2026-09-25T08:40:00+08:00';
+  }
+  return draft;
 }
 
 const TEMPLATES: NoticeTemplate[] = [
@@ -432,6 +465,10 @@ export class AppComponent implements OnInit {
       id: 'discussions', category: '逐句讨论', level: 'warning', title: `${unresolved} 条讨论尚未解决`,
       detail: '发布前请处理或明确忽略未解决讨论。'
     });
+    if (this.hasIncompleteReviews) checks.push({
+      id: 'role-reviews', category: '角色确认', level: 'info', title: '角色确认未完成或已过期',
+      detail: '编辑、法务、翻译、发布人需全部基于当前稿件确认后，才能锁定生成新版本。'
+    });
     return checks;
   }
 
@@ -448,11 +485,38 @@ export class AppComponent implements OnInit {
   }
 
   get allReviewsApproved(): boolean {
-    return this.draft.reviews.every((review) => review.status === 'approved');
+    return this.draft.reviews.every((review) => review.status === 'approved' && !this.isReviewStale(review));
   }
 
   get hasIncompleteReviews(): boolean {
-    return this.draft.reviews.some((review) => review.status !== 'approved');
+    return !this.allReviewsApproved;
+  }
+
+  /** 当前稿件的内容签名，确认记录只有绑定到同一签名才算有效。 */
+  get currentSignature(): string {
+    return contentSignature(this.draft);
+  }
+
+  /** 确认时稿件与当前稿不一致，视为过期确认。 */
+  isReviewStale(review: RoleReview): boolean {
+    return review.status === 'approved' && review.snapshot !== this.currentSignature;
+  }
+
+  reviewStatusLabel(review: RoleReview): string {
+    if (review.status === 'approved') return this.isReviewStale(review) ? '已确认·已过期' : '已确认';
+    return review.status === 'changes' ? '需修改' : '待审阅';
+  }
+
+  /** 锁定前必须补齐的具体缺口：未解决讨论、未确认或已过期的角色确认。 */
+  get reviewGaps(): string[] {
+    const gaps: string[] = [];
+    if (this.unresolvedDiscussionCount) gaps.push(`${this.unresolvedDiscussionCount} 条逐句讨论未解决`);
+    this.draft.reviews.forEach((review) => {
+      if (review.status === 'changes') gaps.push(`${review.role}退回修改后尚未重新确认`);
+      else if (review.status !== 'approved') gaps.push(`${review.role}尚未确认（待审阅）`);
+      else if (this.isReviewStale(review)) gaps.push(`${review.role}的确认基于旧稿，需重新确认`);
+    });
+    return gaps;
   }
 
   isSentenceDiscussed(index: number): boolean {
@@ -536,7 +600,11 @@ export class AppComponent implements OnInit {
   setReviewStatus(role: RoleReview['role'], status: ReviewStatus): void {
     this.commit((draft) => {
       const review = draft.reviews.find((item) => item.role === role);
-      if (review) review.status = status;
+      if (review) {
+        review.status = status;
+        review.snapshot = contentSignature(draft);
+        review.confirmedAt = new Date().toISOString();
+      }
     });
   }
 
@@ -565,22 +633,33 @@ export class AppComponent implements OnInit {
   }
 
   lockVersion(): void {
+    if (this.isLocked) return;
     if (this.blockingChecks.length) {
       this.toastr.warning(`仍有 ${this.blockingChecks.length} 项阻断问题，不能锁定。`, '发布检查未通过');
       this.activeView = 'checks';
       return;
     }
+    const gaps = this.reviewGaps;
+    if (gaps.length) {
+      this.activeView = 'review';
+      this.toastr.warning(`锁定前需补齐：${gaps.join('；')}。`, '审阅未完成，不能锁定');
+      return;
+    }
+    const emergency = this.draft.emergencyRevision;
     const snapshot: VersionSnapshot = {
-      id: uid('version'), label: '最终锁定版本', createdAt: new Date().toISOString(), version: this.nextVersion,
+      id: uid('version'), label: emergency ? '紧急修订锁定版本' : '最终锁定版本', createdAt: new Date().toISOString(), version: this.nextVersion,
       title: this.draft.title, severity: this.draft.severity, scope: this.draft.scope, eventAt: this.draft.eventAt,
       effectiveAt: this.draft.effectiveAt, expiresAt: this.draft.expiresAt, channels: [...this.draft.channels],
-      languages: clone(this.draft.languages), note: '发布前检查通过并锁定。', emergency: false
+      languages: clone(this.draft.languages),
+      note: emergency ? '紧急修订完成，检查与角色确认均针对本稿。' : '发布前检查通过并锁定。',
+      emergency
     };
     this.commit((draft) => {
       draft.versions.push(snapshot);
       draft.version = snapshot.version;
       draft.status = 'locked';
       draft.lockedAt = snapshot.createdAt;
+      draft.emergencyRevision = false;
     });
     this.compareBaseId = this.draft.versions.at(-2)?.id ?? '';
     this.compareTargetId = this.draft.versions.at(-1)?.id ?? '';
@@ -595,9 +674,15 @@ export class AppComponent implements OnInit {
       draft.emergencyRevision = true;
       draft.version = `${major}.${minor + 1}.0-emergency`;
       draft.lockedAt = undefined;
+      // 紧急修订基于新稿件，四类角色确认全部回到待审阅。
+      draft.reviews.forEach((review) => {
+        review.status = 'pending';
+        review.snapshot = undefined;
+        review.confirmedAt = undefined;
+      });
     });
     this.activeView = 'compose';
-    this.toastr.warning('已创建紧急修订稿；锁定版本仍完整保留。', '进入紧急修订');
+    this.toastr.warning('已创建紧急修订稿，原角色确认已回到待审阅；锁定版本仍完整保留。', '进入紧急修订');
   }
 
   showCheck(check: CheckResult): void {
@@ -605,7 +690,7 @@ export class AppComponent implements OnInit {
       const locale = check.id.split('-').at(-1);
       if (locale && this.draft.languages.some((language) => language.id === locale)) this.selectedLanguageId = locale;
       this.activeView = 'compose';
-    } else if (check.id === 'discussions') {
+    } else if (check.id === 'discussions' || check.id === 'role-reviews') {
       this.activeView = 'review';
     }
   }
@@ -651,12 +736,33 @@ export class AppComponent implements OnInit {
   private commit(mutator: (draft: NoticeDraft) => void): void {
     this.history.push(clone(this.draft));
     if (this.history.length > 50) this.history.shift();
-    const next = clone(this.draft);
+    const previous = this.draft;
+    const next = clone(previous);
     mutator(next);
+    this.invalidateStaleApprovals(previous, next);
     next.updatedAt = new Date().toISOString();
     this.draft = next;
     this.future = [];
     this.persist();
+  }
+
+  /**
+   * 确认记录绑定稿件快照：内容、事件要素、渠道或必需语言变化后，
+   * 四类角色确认回到待审阅；某个语言版本内容变化后，该语言的复核标记取消。
+   */
+  private invalidateStaleApprovals(previous: NoticeDraft, next: NoticeDraft): void {
+    const previousLanguages = new Map(previous.languages.map((language) => [language.id, languageSignature(language)]));
+    next.languages.forEach((language) => {
+      const before = previousLanguages.get(language.id);
+      if (before !== undefined && before !== languageSignature(language)) language.reviewed = false;
+    });
+    if (contentSignature(previous) !== contentSignature(next)) {
+      next.reviews.forEach((review) => {
+        review.status = 'pending';
+        review.snapshot = undefined;
+        review.confirmedAt = undefined;
+      });
+    }
   }
 
   private persist(): void {
@@ -669,6 +775,7 @@ export class AppComponent implements OnInit {
     value.discussions ??= [];
     value.reviews ??= [];
     value.requiredLocales ??= ['zh-CN'];
+    value.emergencyRevision ??= false;
     return value;
   }
 

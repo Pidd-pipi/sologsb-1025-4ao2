@@ -117,7 +117,7 @@ blockquote { margin: 0 0 15px; padding: 15px 18px; border-left: 4px solid #ef835
 .discussion-list p { margin: 6px 0; color: #526a72; font-size: 12px; line-height: 1.6; }
 .discussion-list p b { color: #c86a38; }
 .role-review-card article { padding: 12px 0; border-bottom: 1px solid #edf1f1; }
-.role-review-card article:first-child { padding-top: 0; }
+.role-review-card article:first-of-type { padding-top: 0; }
 .role-review-card article > header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 .role-review-card article > header strong, .role-review-card article > header span { display: block; }
 .role-review-card article > header strong { font-size: 13px; }
@@ -125,7 +125,14 @@ blockquote { margin: 0 0 15px; padding: 15px 18px; border-left: 4px solid #ef835
 .role-review-card article > header b { padding: 3px 7px; border-radius: 6px; font-size: 10px; background: #edf2f2; }
 .role-review-card article > header b.approved { color: #27795e; background: #e2f5ed; }
 .role-review-card article > header b.changes { color: #bb5a42; background: #fff0ea; }
+.role-review-card article > header b.stale { color: #a86a17; background: #fdf1dc; }
 .role-review-card article > div:last-child { display: flex; gap: 6px; margin-top: 7px; }
+.review-hint { margin: 0 0 12px; }
+.review-stale-note { margin: 0 0 8px; padding: 7px 10px; border-radius: 8px; color: #8a5a1d; background: #fdf6e7; font-size: 11px; }
+.review-actions { align-items: center; }
+.review-actions small { margin-left: auto; color: #93a3a8; font-size: 10px; }
+.gap-list { margin: 6px 0 0; padding-left: 18px; }
+.gap-list li { margin: 2px 0; }
 .version-actions { display: flex; gap: 8px; }
 .version-layout > aside nb-card { position: sticky; top: 100px; }
 .timeline article { display: grid; grid-template-columns: 18px 1fr; gap: 10px; min-height: 90px; position: relative; }

@@ -225,12 +225,17 @@
           <nb-card class="panel role-review-card">
             <nb-card-header><div><span class="section-kicker">责任链</span><h3>角色审阅</h3></div></nb-card-header>
             <nb-card-body>
+              <p class="muted review-hint">确认绑定当前稿件快照：内容、事件要素、渠道或必需语言变更后，确认自动回到待审阅。</p>
               <article *ngFor="let review of draft.reviews">
-                <header><div><strong>{{ review.role }}</strong><span>{{ review.owner }}</span></div><b [class]="review.status">{{ review.status === 'approved' ? '已确认' : review.status === 'changes' ? '需修改' : '待审阅' }}</b></header>
+                <header><div><strong>{{ review.role }}</strong><span>{{ review.owner }}</span></div><b [class]="review.status" [class.stale]="isReviewStale(review)">{{ reviewStatusLabel(review) }}</b></header>
+                <p class="review-stale-note" *ngIf="isReviewStale(review)">稿件已变更，该确认不再有效，需基于当前稿重新确认。</p>
                 <textarea nbInput fullWidth rows="2" [disabled]="isLocked" [ngModel]="review.note" (ngModelChange)="setReviewNote(review.role, $event)" placeholder="审阅备注"></textarea>
-                <div><button nbButton size="tiny" status="success" [disabled]="isLocked" (click)="setReviewStatus(review.role, 'approved')">确认</button><button nbButton size="tiny" status="warning" [disabled]="isLocked" (click)="setReviewStatus(review.role, 'changes')">退回修改</button></div>
+                <div class="review-actions"><button nbButton size="tiny" status="success" [disabled]="isLocked" (click)="setReviewStatus(review.role, 'approved')">确认</button><button nbButton size="tiny" status="warning" [disabled]="isLocked" (click)="setReviewStatus(review.role, 'changes')">退回修改</button><small *ngIf="review.confirmedAt">{{ isReviewStale(review) ? '原确认于' : '确认于' }} {{ formatDateTime(review.confirmedAt) }}</small></div>
               </article>
-              <nb-alert status="warning" *ngIf="hasIncompleteReviews">仍有角色未确认，不能视为完成跨角色审阅。</nb-alert>
+              <nb-alert status="warning" *ngIf="!isLocked && reviewGaps.length">
+                <strong>锁定前需补齐：</strong>
+                <ul class="gap-list"><li *ngFor="let gap of reviewGaps">{{ gap }}</li></ul>
+              </nb-alert>
             </nb-card-body>
           </nb-card>
         </aside>
